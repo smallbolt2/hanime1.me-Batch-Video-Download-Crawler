@@ -202,7 +202,10 @@ def main():
     with ThreadPoolExecutor(max_workers=3) as executor:
         futures = []  # 用于保存所有future对象，便于后续等待所有任务完成
         # 下面这个循环是依次处理每一个视频链接
-        for idx, watch_url in enumerate(all_video_links[68:], start=69):
+        # 从第69个视频开始处理（因为前68个已经处理过了）
+        # 注意：这里的索引是从0开始的，所以start设置第69个视频的----可以删除
+        #for idx, watch_url in enumerate(all_video_links[68:], start=69):
+        for idx, watch_url in enumerate(all_video_links):
             print(f"\n[编号{idx}] 处理: {watch_url}")
             # 关闭除主窗口外的所有标签页，避免内存占用过多
             main_handle = driver.window_handles[0]  # 获取主窗口句柄
