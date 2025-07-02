@@ -79,14 +79,32 @@ def get_download_page_url(watch_url):
         print(f"未找到下载按钮: {watch_url}，错误: {e}")
         return None
 
+import re
+
+def sanitize_filename(filename):
+    """
+    清理文件名，移除Windows文件系统中不允许的字符
+    参数:
+        filename: 原始文件名
+    返回:
+        清理后的安全文件名
+    """
+    # 定义Windows不允许的字符
+    invalid_chars = r'[<>:"/\\|?*\x00-\x1f]'
+    # 替换为下划线或移除
+    filename = re.sub(invalid_chars, '_', filename)
+    # 移除连续的下划线
+    filename = re.sub(r'_+', '_', filename)
+    # 移除开头和结尾的下划线
+    filename = filename.strip('_')
+    return filename
+
 def get_real_video_url(download_page_url, quality="720p"):
     """
     从下载页面获取真实的视频下载链接
-    
     参数:
         download_page_url: 下载页面的URL
         quality: 视频质量，默认720p
-        
     返回:
         video_url: 真实的视频下载链接
         filename: 视频文件名
@@ -94,21 +112,18 @@ def get_real_video_url(download_page_url, quality="720p"):
     driver.get(download_page_url)  # 打开下载页面
     time.sleep(2)  # 等待页面加载
     soup = BeautifulSoup(driver.page_source, 'html.parser')  # 解析页面内容
-    
     # 遍历页面中的表格行，查找包含指定画质的行
     for tr in soup.select("table tbody tr"):
         tds = tr.find_all("td")  # 获取表格行中的所有单元格
-        # 检查是否有足够的单元格且第二个单元格包含目标画质
         if len(tds) >= 5 and quality in tds[1].get_text():
             a_tag = tds[4].find("a")  # 在第5个单元格中查找下载链接
             if a_tag and a_tag.has_attr("data-url"):
                 video_url = a_tag["data-url"]  # 获取真实的视频URL
-                # 获取视频名称
-                video_name = a_tag.get("download", "")
-                # 从URL中提取原始文件名
-                file_part = video_url.split("/")[-1].split("?")[0]
-                # 组合新的文件名
-                filename = f"{video_name}-{file_part}"
+                video_name = a_tag.get("download", "")  # 获取视频名称
+                file_part = video_url.split("/")[-1].split("?")[0]  # 提取原始文件名
+                filename = f"{video_name}-{file_part}"  # 组合新文件名
+                # 清理文件名
+                filename = sanitize_filename(filename)
                 return video_url, filename
     return None, None
 

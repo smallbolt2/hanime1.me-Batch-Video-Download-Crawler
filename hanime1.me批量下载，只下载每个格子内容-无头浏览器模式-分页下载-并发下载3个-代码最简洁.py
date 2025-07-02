@@ -77,6 +77,26 @@ def get_download_page_url(watch_url):
         print(f"未找到下载按钮: {watch_url}，错误: {e}")
         return None
 
+import re
+
+def sanitize_filename(filename):
+    """
+    清理文件名，移除Windows文件系统中不允许的字符
+    参数:
+        filename: 原始文件名
+    返回:
+        清理后的安全文件名
+    """
+    # 定义Windows不允许的字符
+    invalid_chars = r'[<>:"/\\|?*\x00-\x1f]'
+    # 替换为下划线或移除
+    filename = re.sub(invalid_chars, '_', filename)
+    # 移除连续的下划线
+    filename = re.sub(r'_+', '_', filename)
+    # 移除开头和结尾的下划线
+    filename = filename.strip('_')
+    return filename
+
 def get_real_video_url(download_page_url, quality="720p"):
     """
     从下载页面获取真实的视频下载链接
@@ -100,6 +120,8 @@ def get_real_video_url(download_page_url, quality="720p"):
                 video_name = a_tag.get("download", "")  # 获取视频名称
                 file_part = video_url.split("/")[-1].split("?")[0]  # 提取原始文件名
                 filename = f"{video_name}-{file_part}"  # 组合新文件名
+                # 清理文件名
+                filename = sanitize_filename(filename)
                 return video_url, filename
     return None, None
 
