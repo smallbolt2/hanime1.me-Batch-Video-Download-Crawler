@@ -179,30 +179,38 @@ def main():
         page += 1
     print(f"共收集到{len(all_video_links)}个视频链接")
 
-    # ==================== 批量获取下载信息 ====================
+    # ==================== 边获取边下载 ====================
     save_dir = "videos"  # 设置保存视频的文件夹
     os.makedirs(save_dir, exist_ok=True)  # 创建保存文件夹（如果不存在）
 
-    print(f"准备分批并发下载，每次处理3个视频...")
+    print("边获取边下载，每次最多3个同时下载...")
 
-    batch_size = 3  # 每批处理的视频数量
-    total = len(all_video_links)  # 视频总数
-    # 下面这个循环的作用是：每次处理3个视频，直到所有视频都处理完
-    for i in range(0, total, batch_size):
-        # 取出本批要处理的3个视频链接，比如第一次是0-2，第二次是3-5，以此类推
-        batch_links = all_video_links[i:i+batch_size]
-        download_tasks = []  # 存储本批待下载任务
-        # 下面这个循环是依次处理本批的每一个视频链接
-        for idx, watch_url in enumerate(batch_links):
+    # 定义一个包装函数，线程池会用它来执行下载任务
+    def download_task_wrapper(video_url, save_path):
+        """
+        这个函数就是用来下载一个视频的。
+        参数：
+            video_url: 这个视频的下载链接
+            save_path: 这个视频要保存到本地的文件路径
+        """
+        print(f"开始下载: {save_path}")  # 打印开始下载的信息
+        download_video(video_url, save_path)  # 调用前面定义好的下载函数，真正去下载
+        print(f"下载完成: {save_path}")  # 打印下载完成的信息
+
+    # 创建一个线程池，最多允许3个线程同时工作（即最多同时下载3个视频）
+    # 线程池的作用就是可以让多个任务（这里是下载视频）同时进行，提高效率
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = []  # 用于保存所有future对象，便于后续等待所有任务完成
+        # 下面这个循环是依次处理每一个视频链接
+        for idx, watch_url in enumerate(all_video_links[68:], start=69):
+            print(f"\n[编号{idx}] 处理: {watch_url}")
             # 关闭除主窗口外的所有标签页，避免内存占用过多
             main_handle = driver.window_handles[0]  # 获取主窗口句柄
             for handle in driver.window_handles[1:]:  # 遍历其他窗口
                 driver.switch_to.window(handle)  # 切换到该窗口
                 driver.close()  # 关闭窗口
             driver.switch_to.window(main_handle)  # 切换回主窗口
-            # 这里编号从42开始，所以是i+idx+42
-            # i表示本批第一个视频在总列表中的下标，idx是本批内的下标
-            print(f"\n[编号{i+idx+69}/{total}] 处理: {watch_url}")
+
             # 获取下载页面URL，这一步是用浏览器自动化打开视频页面，点击下载按钮，拿到下载页面的真实地址
             download_page_url = get_download_page_url(watch_url)
             if not download_page_url:
@@ -217,43 +225,21 @@ def main():
             if os.path.exists(save_path):
                 print("  已存在，跳过")
                 continue  # 如果文件已经存在，跳过
-            # 把本视频的下载链接和保存路径加入本批下载任务列表
-            download_tasks.append((video_url, save_path))
 
-        # ========== 并发下载本批视频 ==========
-        # 定义一个包装函数，线程池会用它来执行下载任务
-        def download_task_wrapper(video_url, save_path):
-            """
-            这个函数就是用来下载一个视频的。
-            参数：
-                video_url: 这个视频的下载链接
-                save_path: 这个视频要保存到本地的文件路径
-            """
-            print(f"开始下载: {save_path}")  # 打印开始下载的信息
-            download_video(video_url, save_path)  # 调用前面定义好的下载函数，真正去下载
-            print(f"下载完成: {save_path}")  # 打印下载完成的信息
+            # 只要获取到一个下载链接，就立刻提交到线程池下载
+            # executor.submit 会安排download_task_wrapper函数在线程池中执行
+            future = executor.submit(download_task_wrapper, video_url, save_path)
+            futures.append(future)  # 把future对象保存起来，后面用来等待所有任务完成
 
-        # 创建一个线程池，最多允许3个线程同时工作（即最多同时下载3个视频）
-        # 线程池的作用就是可以让多个任务（这里是下载视频）同时进行，提高效率
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            # 把本批次的所有下载任务都提交给线程池
-            # executor.submit(...) 会安排一个任务在线程池中执行
-            # future_to_task 是一个字典，用来记录每个任务（future对象）和它的参数
-            future_to_task = {
-                executor.submit(download_task_wrapper, video_url, save_path): (video_url, save_path)
-                for video_url, save_path in download_tasks  # 遍历本批次的所有下载任务
-            }
-            # as_completed 会在每个任务完成时返回它的future对象
-            # 这样可以一边下载一边处理结果，不用等所有任务都结束
-            for future in as_completed(future_to_task):
-                video_url, save_path = future_to_task[future]  # 拿到这个任务的参数
-                try:
-                    future.result()  # 这行代码会等这个任务真正完成，如果有异常会抛出来
-                except Exception as exc:
-                    print(f"{save_path} 下载失败: {exc}")  # 如果下载出错，打印错误信息
-        # ========== 本批下载结束，自动进入下一个批次 ==========
+        # 等待所有下载任务完成
+        # as_completed会在每个任务完成时返回它的future对象
+        # 这样可以一边下载一边处理结果，不用等所有任务都结束
+        for future in as_completed(futures):
+            try:
+                future.result()  # 这行代码会等这个任务真正完成，如果有异常会抛出来
+            except Exception as exc:
+                print(f"下载失败: {exc}")  # 如果下载出错，打印错误信息
 
-    # 下载完成后关闭浏览器
     driver.quit()  # 关闭浏览器，释放资源
     print("全部下载完成")  # 打印全部完成信息
 
