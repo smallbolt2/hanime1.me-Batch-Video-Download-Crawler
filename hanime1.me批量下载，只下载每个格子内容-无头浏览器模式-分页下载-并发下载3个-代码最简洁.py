@@ -6,6 +6,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from bs4 import BeautifulSoup
 from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ==================== 浏览器配置部分 ====================
 # 创建Chrome浏览器的配置选项
@@ -153,69 +154,97 @@ def get_playlist_links(watch_url):
 
 def main():
     """
-    主函数：执行整个批量下载流程
+    主函数：自动遍历所有分页，收集所有视频链接，并发下载视频
     """
-    # 设置要爬取的视频列表页面URL（这里是"裏番"分类，2024年）
-    list_url = "https://hanime1.me/search?query=&type=&genre=%E8%A3%8F%E7%95%AA&sort=&year=2025&month="
+    # ==================== 自动遍历所有分页，收集所有视频链接 ====================
+    all_video_links = []  # 用于存储所有页面的视频链接
+    seen_links = set()    # 用于去重，防止重复
+    page = 1
+    while True:
+        # 构造分页URL，第一页和后续页URL格式不同
+        if page == 1:
+            list_url = "https://hanime1.me/search?query=&type=&genre=%E8%A3%8F%E7%95%AA&sort=&year=2024&month="
+        else:
+            list_url = f"https://hanime1.me/search?genre=%E8%A3%8F%E7%95%AA&year=2024&page={page}"
+        print(f"正在处理第{page}页: {list_url}")
+        video_links = get_video_links(list_url)
+        # 过滤掉已经收集过的链接
+        new_links = [link for link in video_links if link not in seen_links]
+        if not new_links:
+            print("没有新的视频链接，分页遍历结束。")
+            break  # 没有新的视频，跳出循环
+        all_video_links.extend(new_links)
+        seen_links.update(new_links)
+        print(f"  本页新增{len(new_links)}个视频，总计{len(all_video_links)}个视频")
+        page += 1
+    print(f"共收集到{len(all_video_links)}个视频链接")
+
+    # ==================== 批量获取下载信息 ====================
     save_dir = "videos"  # 设置保存视频的文件夹
     os.makedirs(save_dir, exist_ok=True)  # 创建保存文件夹（如果不存在）
-    # 获取所有视频链接
-    video_links = get_video_links(list_url)
-    print(f"共找到{len(video_links)}个视频")
-    # 遍历每个视频链接进行下载
-    for idx, watch_url in enumerate(video_links):
-        # 关闭除主窗口外的所有标签页，避免内存占用过多
-        main_handle = driver.window_handles[0]  # 获取主窗口句柄
-        for handle in driver.window_handles[1:]:  # 遍历其他窗口
-            driver.switch_to.window(handle)  # 切换到该窗口
-            driver.close()  # 关闭窗口
-        driver.switch_to.window(main_handle)  # 切换回主窗口
-        print(f"\n[{idx+1}/{len(video_links)}] 处理: {watch_url}")
-        # ==================== 分集下载功能（已注释） ====================
-        # 以下代码用于下载多集视频，目前被注释掉了
-        # playlist_links = get_playlist_links(watch_url)  # 获取分集链接
-        # playlist_links = list(dict.fromkeys(playlist_links))  # 去重
-        # print(f"  共{len(playlist_links)}集")
-        # for ep_idx, ep_url in enumerate(playlist_links):
-        #     print(f"    [{ep_idx+1}/{len(playlist_links)}] 下载分集: {ep_url}")
-        #     download_page_url = get_download_page_url(ep_url)  # 获取下载页面
-        #     if not download_page_url:
-        #         continue
-        #     video_url, filename = get_real_video_url(download_page_url, quality="720p")  # 获取真实下载链接
-        #     if not video_url:
-        #         print("    未找到真实视频链接")
-        #         continue
-        #     save_path = os.path.join(save_dir, filename)  # 构建保存路径
-        #     if os.path.exists(save_path):  # 检查文件是否已存在
-        #         print("    已存在，跳过")
-        #         continue
-        #     print(f"    开始下载: {video_url}")
-        #     download_video(video_url, save_path)  # 下载视频
-        #     print("    下载完成")
-        #     time.sleep(1)  # 延时1秒，防止请求过快被封
-        # ==================== 分集下载功能（已注释） ====================如果需要把下面注释掉就好了
-        # 如果需要下载分集，可以取消上面的注释，使用分集下载功能
-        # 如果不需要分集下载，可以使用下面的单集下载功能
 
+    print(f"准备分批并发下载，每次处理3个视频...")
 
+    batch_size = 3  # 每批处理的视频数量
+    total = len(all_video_links)
+    for i in range(0, total, batch_size):
+        # 取出本批要处理的3个视频链接
+        batch_links = all_video_links[i:i+batch_size]
+        download_tasks = []  # 存储本批待下载任务
+        for idx, watch_url in enumerate(batch_links):
+            # 关闭除主窗口外的所有标签页，避免内存占用过多
+            main_handle = driver.window_handles[0]
+            for handle in driver.window_handles[1:]:
+                driver.switch_to.window(handle)
+                driver.close()
+            driver.switch_to.window(main_handle)
+            print(f"\n[{i+idx+42}/{total}] 处理: {watch_url}")
+            # 获取下载页面URL
+            download_page_url = get_download_page_url(watch_url)
+            if not download_page_url:
+                print("  获取下载页面失败，跳过")
+                continue
+            # 获取真实视频链接和文件名
+            video_url, filename = get_real_video_url(download_page_url, quality="720p")
+            if not video_url:
+                print("  未找到真实视频链接，跳过")
+                continue
+            save_path = os.path.join(save_dir, filename)
+            if os.path.exists(save_path):
+                print("  已存在，跳过")
+                continue
+            # 添加到本批下载任务列表
+            download_tasks.append((video_url, save_path))
 
-        # ==================== 单集下载功能（当前使用） ====================
-        # 只下载主页面视频，不下载分集
-        download_page_url = get_download_page_url(watch_url)  # 获取下载页面URL
-        if not download_page_url:
-            continue  # 如果获取失败，跳过当前视频
-        video_url, filename = get_real_video_url(download_page_url, quality="720p")  # 获取真实视频链接
-        if not video_url:
-            print("    未找到真实视频链接")
-            continue  # 如果获取失败，跳过当前视频
-        save_path = os.path.join(save_dir, filename)  # 构建完整的保存路径
-        if os.path.exists(save_path):  # 检查文件是否已经存在
-            print("    已存在，跳过")
-            continue  # 如果文件已存在，跳过下载
-        print(f"    开始下载: {video_url}")
-        download_video(video_url, save_path)  # 执行下载
-        print("    下载完成")
-        time.sleep(1)  # 延时1秒，防止请求频率过高被网站封禁
+        # ========== 并发下载本批视频 ==========
+        # 定义一个包装函数，在线程池中执行下载任务
+        def download_task_wrapper(video_url, save_path):
+            """
+            下载任务包装函数，便于在线程池中调用
+            参数：
+                video_url: 视频的下载链接
+                save_path: 视频保存的本地路径
+            """
+            print(f"开始下载: {save_path}")
+            download_video(video_url, save_path)
+            print(f"下载完成: {save_path}")
+
+        # 创建一个线程池，最多允许3个线程同时工作（即最多同时下载3个视频）
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            # 用字典保存每个任务（future对象）和它对应的参数，方便后续追踪
+            future_to_task = {
+                executor.submit(download_task_wrapper, video_url, save_path): (video_url, save_path)
+                for video_url, save_path in download_tasks
+            }
+            # as_completed会在每个任务完成时返回它的future对象
+            for future in as_completed(future_to_task):
+                video_url, save_path = future_to_task[future]
+                try:
+                    future.result()
+                except Exception as exc:
+                    print(f"{save_path} 下载失败: {exc}")
+        # ========== 本批下载结束，自动进入下一个批次 ==========
+
     # 下载完成后关闭浏览器
     driver.quit()
     print("全部下载完成")
