@@ -23,7 +23,7 @@ options.add_argument('--accept-language=en-US,en;q=0.9')
 
 # 创建Chrome浏览器实例，使用本地的chromedriver.exe驱动
 # 注意：chromedriver.exe路径需根据实际情况修改
-driver = uc.Chrome(options=options, driver_executable_path=r"E:\hanime1.me视频批量下载\chromedriver.exe")
+driver = uc.Chrome(options=options, driver_executable_path=r"F:\hanime1.me_downloader\chromedriver.exe")
 
 # ==================== 核心功能函数 ====================
 
@@ -110,6 +110,23 @@ def get_real_video_url(download_page_url, quality="720p"):
     driver.get(download_page_url)  # 打开下载页面
     time.sleep(2)  # 等待页面加载
     soup = BeautifulSoup(driver.page_source, 'html.parser')  # 解析页面内容
+#     # 提取日期和观看次数信息
+    date = None
+    view_count = None
+    date_div = soup.find('div', style=lambda value: value and 'margin-bottom: -6px' in value)
+    if date_div:
+        p_tag = date_div.find('p', style=lambda value: value and 'font-size: 12px; color: #bdbdbd; font-weight: 500' in value)
+        if p_tag:
+            # 提取文本内容
+            text_content = p_tag.get_text(strip=True)
+            # 分割日期和观看次数
+            parts = text_content.split('|')
+            if len(parts) >= 2:
+                date = parts[0].strip()
+                view_count = parts[1].strip()
+    
+
+
     # 遍历页面中的表格行，查找包含指定画质的行
     for tr in soup.select("table tbody tr"):
         tds = tr.find_all("td")  # 获取表格行中的所有单元格
@@ -120,37 +137,125 @@ def get_real_video_url(download_page_url, quality="720p"):
                 video_name = a_tag.get("download", "")  # 获取视频名称
                 file_part = video_url.split("/")[-1].split("?")[0]  # 提取原始文件名
                 filename = f"{video_name}-{file_part}"  # 组合新文件名
+                 # 构建新的文件名格式：视频名称-日期-编号-质量
+                if date:
+                     filename = f"{video_name}-日期{date}-编号{file_part}"
+                else:
+                     filename = f"{video_name}-编号{file_part}"
                 # 清理文件名
                 filename = sanitize_filename(filename)
-                return video_url, filename
+                return video_url, filename, date, view_count
     return None, None
-
-def download_video(video_url, save_path):
+# def get_real_video_url(download_page_url, quality="720p"):
+#     """
+#     从下载页面获取真实的视频下载链接
+#     参数:
+#         download_page_url: 下载页面的URL
+#         quality: 视频质量，默认720p
+#     返回:
+#         video_url: 真实的视频下载链接
+#         filename: 视频文件名
+#         date: 视频发布日期
+#         view_count: 视频观看次数
+#     """
+#     driver.get(download_page_url)  # 打开下载页面
+#     time.sleep(2)  # 等待页面加载
+#     soup = BeautifulSoup(driver.page_source, 'html.parser')  # 解析页面内容
+    
+#     # 提取日期和观看次数信息
+#     date = None
+#     view_count = None
+#     date_div = soup.find('div', style=lambda value: value and 'margin-bottom: -6px' in value)
+#     if date_div:
+#         p_tag = date_div.find('p', style=lambda value: value and 'font-size: 12px; color: #bdbdbd; font-weight: 500' in value)
+#         if p_tag:
+#             # 提取文本内容
+#             text_content = p_tag.get_text(strip=True)
+#             # 分割日期和观看次数
+#             parts = text_content.split('|')
+#             if len(parts) >= 2:
+#                 date = parts[0].strip()
+#                 view_count = parts[1].strip()
+    
+#     # 遍历页面中的表格行，查找包含指定画质的行
+#     for tr in soup.select("table tbody tr"):
+#         tds = tr.find_all("td")  # 获取表格行中的所有单元格
+#         if len(tds) >= 5 and quality in tds[1].get_text():
+#             a_tag = tds[4].find("a")  # 在第5个单元格中查找下载链接
+#             if a_tag and a_tag.has_attr("data-url"):
+#                 video_url = a_tag["data-url"]  # 获取真实的视频URL
+#                 video_name = a_tag.get("download", "")  # 获取视频名称
+                
+#                 # 从URL中提取编号（假设编号是URL中的数字部分）
+#                 import re
+#                 number_match = re.search(r'/(\d+)-', video_url)
+#                 number = number_match.group(1) if number_match else "未知编号"
+                
+#                 # 构建新的文件名格式：视频名称-日期-编号-质量
+#                 if date:
+#                     filename = f"{video_name}-日期{date}-编号{number}-{quality}"
+#                 else:
+#                     filename = f"{video_name}-编号{number}-{quality}"
+                
+#                 # 清理文件名
+#                 filename = sanitize_filename(filename)
+#                 return video_url, filename, date, view_count
+    
+#     return None, None, date, view_count
+def download_video(video_url, save_path, max_retries=3, retry_delay=5):
     """
     下载视频文件到指定路径
     参数:
         video_url: 视频的下载链接
         save_path: 保存文件的路径
     """
-    try:
-        # 发送GET请求下载视频，stream=True表示流式下载
-        with requests.get(video_url, stream=True) as r:
-            r.raise_for_status()  # 检查请求是否成功
-            total = int(r.headers.get('content-length', 0))  # 获取文件总大小
-            # 打开文件并显示下载进度条
-            with open(save_path, 'wb') as f, tqdm(
-                desc=save_path,  # 进度条描述
-                total=total,  # 总大小
-                unit='iB',  # 单位
-                unit_scale=True,  # 自动缩放单位
-                unit_divisor=1024,  # 除数
-            ) as bar:
-                # 分块下载文件
-                for chunk in r.iter_content(chunk_size=1024):
-                    size = f.write(chunk)  # 写入文件
-                    bar.update(size)  # 更新进度条
-    except Exception as e:
-        print(f"下载失败: {video_url}，错误: {e}")
+    temp_path = save_path + ".part"
+    for attempt in range(1, max_retries + 1):
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+            # 下载线程里不要访问 Selenium 浏览器窗口，避免窗口已关闭时把任务误判为完成。
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': '*/*',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Connection': 'keep-alive'
+            }
+
+            # 发送GET请求下载视频，stream=True表示流式下载
+            with requests.get(video_url, stream=True, headers=headers, timeout=(10, 60)) as r:
+                r.raise_for_status()  # 检查请求是否成功
+                total = int(r.headers.get('content-length', 0))  # 获取文件总大小
+                # 打开文件并显示下载进度条
+                downloaded = 0
+                with open(temp_path, 'wb') as f, tqdm(
+                    desc=save_path,  # 进度条描述
+                    total=total,  # 总大小
+                    unit='iB',  # 单位
+                    unit_scale=True,  # 自动缩放单位
+                    unit_divisor=1024,  # 除数
+                ) as bar:
+                    # 分块下载文件
+                    for chunk in r.iter_content(chunk_size=1024):
+                        if not chunk:
+                            continue
+                        size = f.write(chunk)  # 写入文件
+                        downloaded += size
+                        bar.update(size)  # 更新进度条
+                if total and downloaded != total:
+                    raise RuntimeError(f"文件大小不完整：应为 {total} 字节，实际 {downloaded} 字节")
+                os.replace(temp_path, save_path)
+                return True
+        except Exception as e:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            if attempt < max_retries:
+                print(f"下载失败: {video_url}，错误: {e}，{retry_delay}秒后重试({attempt + 1}/{max_retries})")
+                time.sleep(retry_delay)
+            else:
+                print(f"下载失败: {video_url}，已重试{max_retries}次，错误: {e}")
+                return False
 
 def get_playlist_links(watch_url):
     """
@@ -185,9 +290,9 @@ def main():
     while True:
         # 构造分页URL，第一页和后续页URL格式不同
         if page == 1:
-            list_url = "https://hanime1.me/search?query=&type=&genre=%E8%A3%8F%E7%95%AA&sort=&year=2024&month="
+            list_url = "https://hanime1.me/search?genre=%E8%A3%8F%E7%95%AA&sort=%E6%9C%80%E6%96%B0%E4%B8%8A%E5%B8%82&date=2026%20%E5%B9%B4&page=1"
         else:
-            list_url = f"https://hanime1.me/search?genre=%E8%A3%8F%E7%95%AA&year=2024&page={page}"
+            list_url = f"https://hanime1.me/search?genre=%E8%A3%8F%E7%95%AA&sort=%E6%9C%80%E6%96%B0%E4%B8%8A%E5%B8%82&date=2026%20%E5%B9%B4&page={page}"
         print(f"正在处理第{page}页: {list_url}")
         video_links = get_video_links(list_url)
         # 过滤掉已经收集过的链接
@@ -202,7 +307,7 @@ def main():
     print(f"共收集到{len(all_video_links)}个视频链接")
 
     # ==================== 边获取边下载 ====================
-    save_dir = "videos"  # 设置保存视频的文件夹
+    save_dir = "2026合集"  # 设置保存视频的文件夹
     os.makedirs(save_dir, exist_ok=True)  # 创建保存文件夹（如果不存在）
 
     print("边获取边下载，每次最多3个同时下载...")
@@ -216,13 +321,19 @@ def main():
             save_path: 这个视频要保存到本地的文件路径
         """
         print(f"开始下载: {save_path}")  # 打印开始下载的信息
-        download_video(video_url, save_path)  # 调用前面定义好的下载函数，真正去下载
-        print(f"下载完成: {save_path}")  # 打印下载完成的信息
+        if download_video(video_url, save_path):  # 调用前面定义好的下载函数，真正去下载
+            print(f"下载完成: {save_path}")  # 打印下载完成的信息
+            return True
+        else:
+            print(f"下载未完成: {save_path}")
+            return False
 
     # 创建一个线程池，最多允许3个线程同时工作（即最多同时下载3个视频）
     # 线程池的作用就是可以让多个任务（这里是下载视频）同时进行，提高效率
     with ThreadPoolExecutor(max_workers=3) as executor:
         futures = []  # 用于保存所有future对象，便于后续等待所有任务完成
+        success_count = 0
+        failed_count = 0
         # 下面这个循环是依次处理每一个视频链接
         # 从第69个视频开始处理（因为前68个已经处理过了）
         # 注意：这里的索引是从0开始的，所以start设置第69个视频的----可以删除
@@ -242,7 +353,8 @@ def main():
                 print("  获取下载页面失败，跳过")
                 continue  # 如果没拿到下载页面，跳过这个视频
             # 获取真实视频链接和文件名，这一步是解析下载页面，找到真正的视频文件下载地址
-            video_url, filename = get_real_video_url(download_page_url, quality="720p")
+            #video_url, filename = get_real_video_url(download_page_url, quality="720p")
+            video_url, filename, date, view_count = get_real_video_url(download_page_url, quality="720p")
             if not video_url:
                 print("  未找到真实视频链接，跳过")
                 continue  # 如果没拿到视频链接，跳过
@@ -261,12 +373,16 @@ def main():
         # 这样可以一边下载一边处理结果，不用等所有任务都结束
         for future in as_completed(futures):
             try:
-                future.result()  # 这行代码会等这个任务真正完成，如果有异常会抛出来
+                if future.result():  # 这行代码会等这个任务真正完成，如果有异常会抛出来
+                    success_count += 1
+                else:
+                    failed_count += 1
             except Exception as exc:
                 print(f"下载失败: {exc}")  # 如果下载出错，打印错误信息
+                failed_count += 1
 
     driver.quit()  # 关闭浏览器，释放资源
-    print("全部下载完成")  # 打印全部完成信息
+    print(f"下载任务处理完成：成功 {success_count} 个，失败 {failed_count} 个")
 
 # 程序入口点
 if __name__ == "__main__":

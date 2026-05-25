@@ -1,0 +1,2 @@
+https://googlechromelabs.github.io/chrome-for-testing/#stable
+目前版本版本 148.0.7778.179（正式版本） （64 位）

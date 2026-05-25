@@ -125,32 +125,58 @@ def get_real_video_url(download_page_url, quality="720p"):
                 return video_url, filename
     return None, None
 
-def download_video(video_url, save_path):
+def download_video(video_url, save_path, max_retries=3, retry_delay=5):
     """
     下载视频文件到指定路径
     参数:
         video_url: 视频的下载链接
         save_path: 保存文件的路径
     """
-    try:
-        # 发送GET请求下载视频，stream=True表示流式下载
-        with requests.get(video_url, stream=True) as r:
-            r.raise_for_status()  # 检查请求是否成功
-            total = int(r.headers.get('content-length', 0))  # 获取文件总大小
-            # 打开文件并显示下载进度条
-            with open(save_path, 'wb') as f, tqdm(
-                desc=save_path,  # 进度条描述
-                total=total,  # 总大小
-                unit='iB',  # 单位
-                unit_scale=True,  # 自动缩放单位
-                unit_divisor=1024,  # 除数
-            ) as bar:
-                # 分块下载文件
-                for chunk in r.iter_content(chunk_size=1024):
-                    size = f.write(chunk)  # 写入文件
-                    bar.update(size)  # 更新进度条
-    except Exception as e:
-        print(f"下载失败: {video_url}，错误: {e}")
+    temp_path = save_path + ".part"
+    for attempt in range(1, max_retries + 1):
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': '*/*',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Connection': 'keep-alive'
+            }
+            # 发送GET请求下载视频，stream=True表示流式下载
+            with requests.get(video_url, stream=True, headers=headers, timeout=(10, 60)) as r:
+                r.raise_for_status()  # 检查请求是否成功
+                total = int(r.headers.get('content-length', 0))  # 获取文件总大小
+                # 打开文件并显示下载进度条
+                downloaded = 0
+                with open(temp_path, 'wb') as f, tqdm(
+                    desc=save_path,  # 进度条描述
+                    total=total,  # 总大小
+                    unit='iB',  # 单位
+                    unit_scale=True,  # 自动缩放单位
+                    unit_divisor=1024,  # 除数
+                ) as bar:
+                    # 分块下载文件
+                    for chunk in r.iter_content(chunk_size=1024):
+                        if not chunk:
+                            continue
+                        size = f.write(chunk)  # 写入文件
+                        downloaded += size
+                        bar.update(size)  # 更新进度条
+                if total and downloaded != total:
+                    raise RuntimeError(f"文件大小不完整：应为 {total} 字节，实际 {downloaded} 字节")
+                os.replace(temp_path, save_path)
+                return True
+        except Exception as e:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            if attempt < max_retries:
+                print(f"下载失败: {video_url}，错误: {e}，{retry_delay}秒后重试({attempt + 1}/{max_retries})")
+                time.sleep(retry_delay)
+            else:
+                print(f"下载失败: {video_url}，已重试{max_retries}次，错误: {e}")
+                return False
 
 def get_playlist_links(watch_url):
     """
@@ -209,6 +235,8 @@ def main():
 
     batch_size = 3  # 每批处理的视频数量
     total = len(all_video_links)  # 视频总数
+    success_count = 0
+    failed_count = 0
     # 下面这个循环的作用是：每次处理3个视频，直到所有视频都处理完
     for i in range(0, total, batch_size):
         # 取出本批要处理的3个视频链接，比如第一次是0-2，第二次是3-5，以此类推
@@ -252,8 +280,12 @@ def main():
                 save_path: 这个视频要保存到本地的文件路径
             """
             print(f"开始下载: {save_path}")  # 打印开始下载的信息
-            download_video(video_url, save_path)  # 调用前面定义好的下载函数，真正去下载
-            print(f"下载完成: {save_path}")  # 打印下载完成的信息
+            if download_video(video_url, save_path):  # 调用前面定义好的下载函数，真正去下载
+                print(f"下载完成: {save_path}")  # 打印下载完成的信息
+                return True
+            else:
+                print(f"下载未完成: {save_path}")
+                return False
 
         # 创建一个线程池，最多允许3个线程同时工作（即最多同时下载3个视频）
         # 线程池的作用就是可以让多个任务（这里是下载视频）同时进行，提高效率
@@ -270,14 +302,18 @@ def main():
             for future in as_completed(future_to_task):
                 video_url, save_path = future_to_task[future]  # 拿到这个任务的参数
                 try:
-                    future.result()  # 这行代码会等这个任务真正完成，如果有异常会抛出来
+                    if future.result():  # 这行代码会等这个任务真正完成，如果有异常会抛出来
+                        success_count += 1
+                    else:
+                        failed_count += 1
                 except Exception as exc:
                     print(f"{save_path} 下载失败: {exc}")  # 如果下载出错，打印错误信息
+                    failed_count += 1
         # ========== 本批下载结束，自动进入下一个批次 ==========
 
     # 下载完成后关闭浏览器
     driver.quit()  # 关闭浏览器，释放资源
-    print("全部下载完成")  # 打印全部完成信息
+    print(f"下载任务处理完成：成功 {success_count} 个，失败 {failed_count} 个")
 
 # 程序入口点
 if __name__ == "__main__":
