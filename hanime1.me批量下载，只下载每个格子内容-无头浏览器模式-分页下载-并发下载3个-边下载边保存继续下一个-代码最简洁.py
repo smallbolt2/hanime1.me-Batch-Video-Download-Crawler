@@ -107,6 +107,8 @@ def get_real_video_url(download_page_url, quality="720p"):
         video_url: 真实的视频下载链接
         filename: 视频文件名
     """
+    # 优先级列表
+    quality_order = ["720p", "1080p", "480p"]
     driver.get(download_page_url)  # 打开下载页面
     time.sleep(2)  # 等待页面加载
     soup = BeautifulSoup(driver.page_source, 'html.parser')  # 解析页面内容
@@ -128,9 +130,11 @@ def get_real_video_url(download_page_url, quality="720p"):
 
 
     # 遍历页面中的表格行，查找包含指定画质的行
-    for tr in soup.select("table tbody tr"):
+    for q in quality_order:
+    
+     for tr in soup.select("table tbody tr"):
         tds = tr.find_all("td")  # 获取表格行中的所有单元格
-        if len(tds) >= 5 and quality in tds[1].get_text():
+        if len(tds) >= 5 and q in tds[1].get_text():
             a_tag = tds[4].find("a")  # 在第5个单元格中查找下载链接
             if a_tag and a_tag.has_attr("data-url"):
                 video_url = a_tag["data-url"]  # 获取真实的视频URL
@@ -145,7 +149,7 @@ def get_real_video_url(download_page_url, quality="720p"):
                 # 清理文件名
                 filename = sanitize_filename(filename)
                 return video_url, filename, date, view_count
-    return None, None
+    return None, None, None, None
 # def get_real_video_url(download_page_url, quality="720p"):
 #     """
 #     从下载页面获取真实的视频下载链接
@@ -354,7 +358,7 @@ def main():
                 continue  # 如果没拿到下载页面，跳过这个视频
             # 获取真实视频链接和文件名，这一步是解析下载页面，找到真正的视频文件下载地址
             #video_url, filename = get_real_video_url(download_page_url, quality="720p")
-            video_url, filename, date, view_count = get_real_video_url(download_page_url, quality="720p")
+            video_url, filename, date, view_count = get_real_video_url(download_page_url)
             if not video_url:
                 print("  未找到真实视频链接，跳过")
                 continue  # 如果没拿到视频链接，跳过
